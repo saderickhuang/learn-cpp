@@ -167,8 +167,191 @@ C++11中对于右值有了更明确的定义，一个表达式中，可以分为
 
 需要注意的是，如果这个classA没有针对移动构造函数或者移动赋值的操作特殊处理的话。那么这两句代码在执行结束后，我们会看到var1和var2的成员变量都指向了相同的地址，这样的话就引入了一个问题，var1和var2在生命周期结束时，都会对同一个地址进行销毁(BOOM!),所以对于这个容易引起错误理解的函数名，必须要清楚：
 ```
-std::move()只是将左值转换为右值，并不移动任何东西。
+std::move()只是将左值转换为右值，并不移动任何东西。本质上move = static_cast,相当于一个静态转换
+```
+那么，引入右值引用的目的是什么呢？主要是两点：移动语义的实现和完美转发
+### 04.02 右值引用的用途：移动语义
+首先，需要理解一个概念：深拷贝与浅拷贝。例如我们有一个string A，string在实际的实现中，大致都可以看作是一个指向堆内存的char*。深拷贝即我们在把A拷贝到string B时，开辟相同大小的一段空间，同时将A的内容完全复制一份到B的内存空间中。而浅拷贝顾名思义，就是直接将B的char*指向A的位置，两者指向同一个地址。
+
+很容易想到两者在实际执行时的区别，深拷贝会占用更多的资源，而浅拷贝则很有可能会导致异常：例如A在生命周期结束时销毁，而这时如果不是手动的去销毁并同时销毁B，则会导致B在再次使用或者析构时发生异常，所以这种情况下浅拷贝毫无意义。
+
+那么如果A是一个右值呢？因为我们确定A在这次操作后不再被使用，我们可以直接用B接管A的变量(或者称之为资源)，这样便解决了深拷贝所消耗的开辟内存和复制所消耗的资源。这种操作，便成为移动语义的实现。
+在C++11后的STL容器，全部都实现了移动语义：
+```
+#include <vector>
+
+// 返回一个可能很大的vector
+std::vector<int> get_vector(int sz)
+{
+    std::vector<int> vec(sz, 0); // 全部填0
+    return vec;
+}
+
+int main()
+{
+    std::vector<int> vec_red;
+    vec_red = get_vector(999); // 返回含有999个0的vector
+}
+```
+上面的代码在C++11之前，会先在getVector中生成一个999长度的vector，然后赋值给vec_red时，会再执行一次vector的拷贝构造函数,显然get_vector返回的vector是右值，这句赋值结束后，这个值也就消失了。
+
+而在C++11之后，这段代码就只会在get_vector中构造一次999长度的vector，然后由vec_red"接管"这个返回值。
+
+对于我们自己定义的类，又如何实现移动语义呢？下面的代码中定义了移动构造函数的实现方式。注意当类中同时包含拷贝构造函数和移动构造函数时，如果使用临时对象初始化当前类的对象，编译器会优先调用移动构造函数来完成此操作。只有当类中没有合适的移动构造函数时，编译器才会退而求其次，调用拷贝构造函数。
+
+```
+#include <iostream>
+#include <memory>
+using namespace std;
+
+class Array_custom
+{
+public:
+	Array_custom() :_element(nullptr), _length(0)
+	{
+		cout << "start default deconstructor" << endl;
+	}
+	Array_custom(size_t len)
+	{
+		cout << "start deconstructor with argument" << endl;
+		_length = len;
+		_element = new int[len];
+	}
+	Array_custom(Array_custom&& item)//移动构造函数
+	{
+		cout << "start move deconstructor" << endl;
+		_length = item._length;
+		_element = item._element;
+		if (item._element != nullptr)
+		{
+			item._element = nullptr;
+			item._length = 0;
+		}
+	}
+	~Array_custom()
+	{
+		cout << "start deconstructor" << endl;
+		cout << "length:"<< _length << endl;
+		if (_element != nullptr)
+		{
+			delete[]_element;
+			_length = 0;
+		}
+		cout << "deconstructor end" << endl;
+	}
+
+private:
+	int* _element;
+	size_t _length;
+};
+
+int main()
+{
+	Array_custom a(10);
+	Array_custom b(std::move(a));
+}
+```
+以上代码的执行结果为:
+```
+start deconstructor with argument
+start move deconstructor
+start deconstructor
+length:10
+deconstructor end
+start deconstructor
+length:0
+deconstructor end
+```
+### 04.03 右值引用的用途：完美转发
+所谓的完美转发是指，在模板函数中使用输入的函数传递给函数中调用的其他函数时，能够正确的区分左右值，如模板函数传入的是右值，那么调用的子函数输入的也应是右值。
+C++11之前并非不能实现这一点，我们知道定义模板时，const修饰的参数只能接收右值，或者说常量，非const修饰的参数只能接收左值。
+所以如果我们有个模板函数TemplateFunc，在C++11之前如果要实现完美转发需要写出如下代码。
+```
+void func_Called(int &a)
+{
+
+}
+void func_Called(const int &a)
+{
+
+}
+template <Typename T>
+void TemplateFunc(T& t)
+{
+    func_Called(t);
+}
+template <Typename T>
+void TemplateFunc(Const T& t)
+{
+    func_Called(t);
+}
+```
+利用重载，对参数为左值和右值的情况分别实现一次函数，显然这种情况只适用于参数数量极少的情况，否则就需要实现大量的模板函数。
+而在C++11中，模板函数允许使用右值引用的类型作为参数：
 ```
 
+template <Typename T>
+void TemplateFunc(T&& t)
+{
 
+}
 
+int main()
+{
+	int a = 10;
+	TemplateFunc(a);
+
+    int &b = a;
+    TemplateFunc(b);
+
+	TemplateFunc(int(10));
+}
+
+```
+以上代码中，三种调用方式均可编译通过，那么这几种情况下，参数具体是如何传递的呢？这就涉及另一个概念，叫做引用折叠，根据TemplateFunc(T&& t)传入参数类型的不同，实际情况可能是：
+
+TemplateFunc(a);    ->  T=int&   (左值引用)   ->TemplateFunc(int& && t) ->TemplateFunc(int&t)
+
+TemplateFunc(b);    ->  T=int&  (左值引用)  ->TemplateFunc(int& && t)   ->TemplateFunc(int&t)
+
+TemplateFunc(int(10));    ->  T=int  (右值)  ->TemplateFunc(int&& && t) ->TemplateFunc(int&& t)
+
+对于这个模板来说，参数类型转换后，形成了引用的引用，我们知道在正常的代码里，是不允许这么做的，那么为什么模板函数可以编译通过呢，是因为编译器在处理时引入了一个叫做引用折叠的概念进行转换，来判断传入的到底是左值还是右值并转换为正确的类型，简单来说就是把模板参数的引用类型和T的引用类型结合来看，如果均为右值引用，则转换后的参数为右值，否则为左值。
+
+到这一步，我们解决了模板函数的参数接收左值和右值的问题，现在回到完美转发这个概念上，
+```
+template<typename T>
+void print(T & t){
+    std::cout << "Lvalue ref" << std::endl;
+}
+
+template<typename T>
+void print(T && t){
+    std::cout << "Rvalue ref" << std::endl;
+}
+template <Typename T>
+void TemplateFunc(T&& t)
+{
+    print(t);
+    print(std::forward<T>(t))
+}
+int main()
+{
+    int a = 10;
+    TemplateFunc(a);//左值调用
+    cout << "----------------------------" << endl;
+    TemplateFunc(std::move(a));//右值调用
+
+}
+```
+对于上面这段代码，执行结果为：
+```
+Lvalue ref
+Lvalue ref
+----------------------------
+Lvalue ref
+Rvalue ref
+
+```
+可以看到在右值调用时，print(t)时，t被看作左值，这时因为在调用时，在函数TemplateFunc中来看，传入的参数t都已经转换为左值了。因此需要使用print(std::forward<T>(t))来继续调用，这样才能够保证调用时，保持参数t的左值右值属性。以上就是完美转发的使用。
+所谓右值的概念的引入和在C++11中的细化，主要还是为了提升在拷贝时的效率问题，通过对临时对象的再利用，节省资源提高效率。
