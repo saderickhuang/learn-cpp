@@ -355,3 +355,152 @@ Rvalue ref
 ```
 可以看到在右值调用时，print(t)时，t被看作左值，这时因为在调用时，在函数TemplateFunc中来看，传入的参数t都已经转换为左值了。因此需要使用print(std::forward<T>(t))来继续调用，这样才能够保证调用时，保持参数t的左值右值属性。以上就是完美转发的使用。
 所谓右值的概念的引入和在C++11中的细化，主要还是为了提升在拷贝时的效率问题，通过对临时对象的再利用，节省资源提高效率。
+
+
+## 05 nullptr
+nullptr是为了解决二义性的问题引入的，用来表示空指针，因为原先的NULL实际是int类型的0，那么在如下代码编译时，编译器便无法区分实际调用的函数应该是哪个了:
+```
+void function(void * ptr)
+{}
+void function(int val)
+{}
+int main()
+{
+    function(NULL);
+}
+```
+## 06 enum class
+传统的枚举类型，有这些问题：
+a.在作用域内均可见，由此带来一个问题就是代码时需要去避免命名的冲突：
+```
+enum COLOR{RED,BLUE}
+enum EMO{HAPPY,BLUE}
+```
+b.不能指定枚举变量转换的类型，而是会强制转换为int，即使我们不希望这么做
+
+因此C++11引入了枚举类
+```
+enum class Color:char{RED,BLUE}
+//usage:
+Color color = Color::RED;
+```
+## 07 constexpr
+使用constexpr修饰的表达式或者函数，编译器会在编译期尝试编译为常量值.
+```
+constexpr int a = 1 + 2 + 3;
+char arr[a]; // 合法，a 是编译期常量
+
+constexpr int foo() 
+{
+  return 5;
+}
+```
+注意：对于无法在编译器确定返回结果的函数，会退化为普通的运行期函数，而不是报错.
+
+## 08 初始化列表
+C++11之前，数组和POD类型的变量可以使用初始化列表的方式来精简代码：
+```
+int arry[] = {1,2,3,4}
+struct LOCATION{
+    int x;
+    int y;
+}
+LOCATION loc = {1,2};
+```
+C++11扩大了初始化列表可以使用的范围：
+```
+class person{
+    person(string name,int height)
+    {
+        ......
+    }
+}
+
+person p1 = {"WU DALANG",150};//用于初始化
+
+person getAperson()
+{
+    return {"WU SONG",188};//用于返回值
+}
+
+void viewPerson(person p);//用于普通函数的参数
+//calling:
+viewPerson({"WU SONG",188});
+```
+
+## 09 委托构造函数和继承构造函数
+在同一个类中，可能同时存在多个构造函数，那么我们可以在某个构造函数的基础上再去实现另一个构造函数,称为委托构造函数：
+```
+class PERSON
+{
+public:
+    PERSON() = default;
+    PERSON(int age){m_age=age;}
+    PERSON(string name,int age):PERSON(age)
+    {
+        m_name = name;
+    }
+private:
+    string m_name;
+    int    m_age;
+
+}
+```
+C++11之前，在类B需要使用基类A的构造函数的话，必须在B里显式的声明，如果有多个版本的构造函数都想继承下来的话，就需要相应的全部声明一边。
+
+因此在C++11中，允许使用using关键字来继承基类的构造函数：
+```
+class PERSON
+{
+public:
+    PERSON() = default;
+    PERSON(int age){m_age=age;}
+    PERSON(string name,int age):PERSON(age)
+    {
+        m_name = name;
+    }
+private:
+    string m_name;
+    int    m_age;
+
+}
+class STUDENT:public PERSON
+{
+public:
+using PERSON::PERSON;//一句话即可完成全部构造函数的继承
+private:
+}
+```
+但需要注意的是，这种方式使得派生类新添加的变量无法初始化，可以考虑下面两种方式:
+```
+class STUDENT:public PERSON
+{
+public:
+    using PERSON::PERSON;
+private:
+    double m_double{0.0};//C++11允许就地初始化
+}
+
+class STUDENT:public PERSON
+{
+public:
+    using PERSON::PERSON;
+    Derived(string name,int age,double b):PERSON(name,age),m_double(b){}//为派生类定义新的构造函数
+private:
+    double m_double{0.0};//C++11允许就地初始化
+}
+```
+## 10 long long
+其实这个应该视作一个历史遗留问题，即在C++的标准里，long 和int的长度定义目前实际是一样的。因为int在早期的16位系统下，长度为16位，而long则定义为32位，而在目前32和64位的系统下，int类型也成了32位，这就导致long实际并无作用。参考CPPREFERENCE的定义:
+```
+int - basic integer type. The keyword int may be omitted if any of the modifiers listed below are used. If no length modifiers are present, it’s guaranteed to have a width of at least 16 bits. However, on 32/64 bit systems it is almost exclusively guaranteed to have width of at least 32 bits.
+long - target type will have width of at least 32 bits.
+```
+换句话说，按照标准，long至少要保证32bit长度，而int至少要保证有16位长度，并未要求long的长度一定要大于int，而现在的编译器至少都会给int4个字节(16位的嵌入式系统可能会有例外)，因此我们目前基本可以将两者视作相同的长度。
+
+C++11 为了兼容之前的规定，便引入了long long类型，规定这一类型至少有64 bit的长度:
+```
+long long - target type will have width of at least 64 bits.(since C++11)
+```
+
+因为C/C++代码级跨平台的特性，这一设计引入正式标准也就意味着不会因为编译器或者开发平台的不同而有差异，那么相应的类库也就会逐步的引入这一类型了。
