@@ -174,7 +174,9 @@ C++11中对于右值有了更明确的定义，一个表达式中，可以分为
 std::move()只是将左值转换为右值，并不移动任何东西。本质上move = static_cast,相当于一个静态转换
 ```
 那么，引入右值引用的目的是什么呢？主要是两点：移动语义的实现和完美转发
+
 ### 04.02 右值引用的用途：移动语义
+
 首先，需要理解一个概念：深拷贝与浅拷贝。例如我们有一个string A，string在实际的实现中，大致都可以看作是一个指向堆内存的char*。深拷贝即我们在把A拷贝到string B时，开辟相同大小的一段空间，同时将A的内容完全复制一份到B的内存空间中。而浅拷贝顾名思义，就是直接将B的char*指向A的位置，两者指向同一个地址。
 
 很容易想到两者在实际执行时的区别，深拷贝会占用更多的资源，而浅拷贝则很有可能会导致异常：例如A在生命周期结束时销毁，而这时如果不是手动的去销毁并同时销毁B，则会导致B在再次使用或者析构时发生异常，所以这种情况下浅拷贝毫无意义。
@@ -266,7 +268,9 @@ start deconstructor
 length:0
 deconstructor end
 ```
+
 ### 04.03 右值引用的用途：完美转发
+
 所谓的完美转发是指，在模板函数中使用输入的函数传递给函数中调用的其他函数时，能够正确的区分左右值，如模板函数传入的是右值，那么调用的子函数输入的也应是右值。
 C++11之前并非不能实现这一点，我们知道定义模板时，const修饰的参数只能接收右值，或者说常量，非const修饰的参数只能接收左值。
 所以如果我们有个模板函数TemplateFunc，在C++11之前如果要实现完美转发需要写出如下代码。
@@ -525,3 +529,76 @@ using v =  std::vector<T> ;//允许使用using
 ```
 
 ## 12 变长参数模板
+在传统 C++ 中，类模板或函数模板只能接受固定数量的模板参数。
+
+⽽ C++11 允许任意多个、任意类别的模板参数，同时在定义时⽆需固定参数个数。如下所⽰：
+```
+template<typename... T> class DogT;
+
+// 传⼊多个不同类型的模板参数
+class DogT<int, 
+            std::vector<int>,
+            std::map<std::string,
+            std::vector<int>>> dogT;
+
+// 不传⼊参数（ 0 个参数）
+class DogT<> nothing;
+
+// 第⼀个参数必传，之后为变⻓参数
+template<typename require, typename... Args> class CatT;
+
+//同样适用于模板函数
+template<typename... Args>
+void my_print(const std::string& str, Args... args) {
+  // 使⽤ sizeof... 计算参数个数
+  std::cout << sizeof...(args) << std::endl;
+}
+```
+## 13 智能指针
+### 13.01 auto_ptr
+传统的C++(其实是C++03),提供了auto pointer,思路很简单，就是将资源保存在对象里，这样就可以让资源的销毁动作在对象析构中完成，避免开发者人为的去判段和销毁资源。
+
+但同时auto pointer的设计又被认为是失败的，因为在当时还没有拷贝语义的出现，而语言设计者们希望实现资源由单个智能指针独占的设计，因此在实现auto pointer的拷贝构造时，采用了类似我们现在概念中移动构造的理念，即当auto_ptrA 拷贝或者赋值给auto_ptr B时，会同时将A的指针release掉，因此下面这段代码是无法编译通过的：
+
+``` 
+int main(int argc, char const *argv[]) {
+    std::auto_ptr<int> iptr(new int(0));
+    std::vector<std::auto_ptr<int> > integer_vec;
+
+    integer_vec.push_back(iptr);//问题在这里
+    return 0;
+}
+```
+因为对于auto_ptr类型的vector进行拷贝构造时，通过push_back传入的iptr会作为常量传入,即 const auto_ptr &iptr，而auto_ptr的拷贝构造不支持常量参数，为什么不支持呢？原因正是上面提到的,auto_ptr在拷贝构造时，需要同时释放掉构造函数传入的参数。用C++11的概念来说，就是auto_ptr只能使用左值进行拷贝构造。
+
+换句话说，auto_ptr使用拷贝的方式实现了移动的操作，既带来的迷惑性，在应用中也有很大的局限。
+
+### 13.02 unique_ptr
+unique_ptr是C++11中对auto_ptr原本意图的真正实现，即内存所有权在同⼀个时间内是唯⼀的，但不同于auto_ptr对拷贝语义的魔改，借助 ##04 中提到的移动语义和move操作，来实现unique_ptr之间所有权的转移，并且禁用了常量引用作为参数的构造函数和复制操作。
+
+例如下面的代码：
+```
+    std::unique_ptr<int> iptr(new int(1));
+    std::vector<std::unique_ptr<int> > integer_vec;
+
+    integer_vec.push_back(iptr); //拷贝构造函数已禁用。
+    integer_vec.push_back(std::move(iptr));//pass
+```
+## 13.03 shared_ptr / weak_ptr
+shared_ptr允许多个shared_ptr指向同一个资源。指针内部使用引用计数器来判断是否还有指针在引用资源，计数器归零时，资源将被回收。推荐使用make_shared 来创建资源，并返回一个share_ptr指针。
+
+weak_ptr可以指向share_ptr指向的内存，weak_ptr不能够操作*或者->,即不能操作资源本身，只是允许通过lock(),返回一个指向资源的shared_ptr，如果指向的资源已释放，则返回一个nullptr；或者通过expired()返回bool值来判断资源是否已经释放。
+
+weak_ptr的引入一方面为我们提供了非常方便的判断资源是否释放的操作；更重要的是为了解决shared_ptr的引用计数器机制，在互相引用时导致的循环引用的问题:
+```
+    auto a = std::make_shared<A>();
+	auto b = std::make_shared<B>();
+	a->pointer = b;
+	b->pointer = a;
+	std::weak_ptr<A> wp = a;
+	a.reset();
+	b.reset();
+	cout << boolalpha << wp.expired() << endl;//false
+	return 0;
+```
+上面的代码最终会输出false,这是因为a b之间互相用share_ptr指向，导致即使 ab均reset后，引用计数器仍为1，同时又无法获取到该资源，导致内存邪路，解决方法就是将a或者b替换为weak_ptr，这样在离开作用域时，最终只有a或者b还未析构，并且未被智能指针指向，最终被释放掉。
