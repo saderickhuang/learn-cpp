@@ -555,6 +555,8 @@ void my_print(const std::string& str, Args... args) {
 }
 ```
 ## 13 智能指针
+### 13.00 RAII
+
 ### 13.01 auto_ptr
 传统的C++(其实是C++03),提供了auto pointer,思路很简单，就是将资源保存在对象里，这样就可以让资源的销毁动作在对象析构中完成，避免开发者人为的去判段和销毁资源。
 
@@ -584,7 +586,7 @@ unique_ptr是C++11中对auto_ptr原本意图的真正实现，即内存所有权
     integer_vec.push_back(iptr); //拷贝构造函数已禁用。
     integer_vec.push_back(std::move(iptr));//pass
 ```
-## 13.03 shared_ptr / weak_ptr
+### 13.03 shared_ptr / weak_ptr
 shared_ptr允许多个shared_ptr指向同一个资源。指针内部使用引用计数器来判断是否还有指针在引用资源，计数器归零时，资源将被回收。推荐使用make_shared 来创建资源，并返回一个share_ptr指针。
 
 weak_ptr可以指向share_ptr指向的内存，weak_ptr不能够操作*或者->,即不能操作资源本身，只是允许通过lock(),返回一个指向资源的shared_ptr，如果指向的资源已释放，则返回一个nullptr；或者通过expired()返回bool值来判断资源是否已经释放。
@@ -602,3 +604,6 @@ weak_ptr的引入一方面为我们提供了非常方便的判断资源是否释
 	return 0;
 ```
 上面的代码最终会输出false,这是因为a b之间互相用share_ptr指向，导致即使 ab均reset后，引用计数器仍为1，同时又无法获取到该资源，导致内存邪路，解决方法就是将a或者b替换为weak_ptr，这样在离开作用域时，最终只有a或者b还未析构，并且未被智能指针指向，最终被释放掉。
+## 14 尾置返回类型
+
+## 15 Lambda 表达式
